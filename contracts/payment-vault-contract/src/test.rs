@@ -2,7 +2,7 @@
 use crate::{PaymentVaultContract, PaymentVaultContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, Env,
+    token, Address, Env, Symbol,
 };
 
 extern crate std;
@@ -17,6 +17,28 @@ fn create_token_contract<'a>(env: &'a Env, admin: &Address) -> token::StellarAss
     token::StellarAssetClient::new(env, &contract.address())
 }
 
+// Mock Identity Registry contract that returns true for is_verified
+mod mock_registry {
+    use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+
+    #[contract]
+    pub struct MockRegistry;
+
+    #[contractimpl]
+    impl MockRegistry {
+        pub fn is_verified(env: Env, expert: Address) -> bool {
+            // Always return true for mock
+            true
+        }
+    }
+}
+
+// Create a mock registry contract that returns true for is_verified
+fn create_mock_registry<'a>(env: &'a Env) -> Address {
+    let contract_id = env.register(mock_registry::MockRegistry, ());
+    contract_id
+}
+
 #[test]
 fn test_initialization() {
     let env = Env::default();
@@ -25,13 +47,15 @@ fn test_initialization() {
     let admin = Address::generate(&env);
     let token = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
+    let registry = create_mock_registry(&env);
 
     // 1. Successful Init
-    let res = client.try_init(&admin, &token, &oracle);
+    let res = client.try_init(&admin, &token, &oracle, &registry);
     assert!(res.is_ok());
 
     // 2. Double Init (Should Fail)
-    let res_duplicate = client.try_init(&admin, &token, &oracle);
+    let res_duplicate = client.try_init(&admin, &token, &oracle, &registry);
     assert!(res_duplicate.is_err());
 }
 
@@ -44,6 +68,8 @@ fn test_partial_duration_scenario() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
+    let registry = create_mock_registry(&env);
 
     // Create token contract and mint tokens to user
     let token_admin = Address::generate(&env);
@@ -52,7 +78,7 @@ fn test_partial_duration_scenario() {
 
     // Initialize vault
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Book session: rate = 10 tokens/second, max_duration = 100 seconds
     // Total deposit = 10 * 100 = 1000 tokens
@@ -86,13 +112,14 @@ fn test_full_duration_no_refund() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Book session
     let rate_per_second = 10_i128;
@@ -121,13 +148,14 @@ fn test_double_finalization_protection() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     let rate_per_second = 10_i128;
     let max_duration = 100_u64;
@@ -155,13 +183,14 @@ fn test_oracle_authorization_enforcement() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     let rate_per_second = 10_i128;
     let max_duration = 100_u64;
@@ -194,13 +223,14 @@ fn test_zero_duration_finalization() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     let rate_per_second = 10_i128;
     let max_duration = 100_u64;
@@ -226,10 +256,11 @@ fn test_booking_not_found() {
 
     let admin = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
     let token = Address::generate(&env);
 
     let client = create_client(&env);
-    client.init(&admin, &token, &oracle);
+    client.init(&admin, &token, &oracle, &registry);
 
     // Try to finalize non-existent booking
     let result = client.try_finalize_session(&999, &50);
@@ -249,6 +280,7 @@ fn test_book_session_balance_transfer() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
@@ -258,7 +290,7 @@ fn test_book_session_balance_transfer() {
     token.mint(&user, &initial_balance);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Book session with specific deposit
     let rate_per_second = 5_i128;
@@ -306,13 +338,14 @@ fn test_get_user_and_expert_bookings() {
     let expert1 = Address::generate(&env);
     let expert2 = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &100_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Create 2 bookings for the same user with different experts
     let rate_per_second = 10_i128;
@@ -365,13 +398,14 @@ fn test_reclaim_stale_session_too_early() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Create booking
     let rate_per_second = 10_i128;
@@ -399,13 +433,14 @@ fn test_reclaim_stale_session_success() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Create booking
     let rate_per_second = 10_i128;
@@ -439,13 +474,14 @@ fn test_reclaim_stale_session_wrong_user() {
     let other_user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Create booking
     let rate_per_second = 10_i128;
@@ -476,13 +512,14 @@ fn test_reclaim_already_finalized() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Create booking
     let rate_per_second = 10_i128;
@@ -513,13 +550,14 @@ fn test_expert_rejects_pending_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Create booking
     let rate_per_second = 10_i128;
@@ -557,13 +595,14 @@ fn test_user_cannot_reject_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     let rate_per_second = 10_i128;
     let max_duration = 100_u64;
@@ -589,13 +628,14 @@ fn test_reject_already_complete_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     let rate_per_second = 10_i128;
     let max_duration = 100_u64;
@@ -621,13 +661,14 @@ fn test_reject_already_reclaimed_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     let rate_per_second = 10_i128;
     let max_duration = 100_u64;
@@ -656,13 +697,14 @@ fn test_wrong_expert_cannot_reject() {
     let expert = Address::generate(&env);
     let wrong_expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     let rate_per_second = 10_i128;
     let max_duration = 100_u64;
@@ -688,9 +730,10 @@ fn test_reject_nonexistent_booking() {
     let expert = Address::generate(&env);
     let token = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let client = create_client(&env);
-    client.init(&admin, &token, &oracle);
+    client.init(&admin, &token, &oracle, &registry);
 
     // Expert tries to reject non-existent booking (should fail - not found)
     let result = client.try_reject_session(&expert, &999);
@@ -707,10 +750,11 @@ fn test_expert_can_set_and_update_rate() {
     let admin = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
     let token = Address::generate(&env);
 
     let client = create_client(&env);
-    client.init(&admin, &token, &oracle);
+    client.init(&admin, &token, &oracle, &registry);
 
     // Initial set
     let res1 = client.try_set_my_rate(&expert, &10_i128);
@@ -734,6 +778,7 @@ fn test_book_session_calculates_correct_deposit() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
@@ -741,7 +786,7 @@ fn test_book_session_calculates_correct_deposit() {
     token.mint(&user, &initial_balance);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Set expert rate
     let stored_rate = 15_i128;
@@ -767,13 +812,14 @@ fn test_book_session_fails_if_expert_rate_not_set() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &5_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Expert has NOT set rate
 
@@ -795,13 +841,14 @@ fn test_pause_blocks_book_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Set expert rate before pausing
     client.set_my_rate(&expert, &10_i128);
@@ -827,13 +874,14 @@ fn test_pause_blocks_finalize_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Book session while unpaused
     let booking_id = {
@@ -858,13 +906,14 @@ fn test_pause_blocks_reclaim_stale_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Book session while unpaused
     let booking_id = {
@@ -893,13 +942,14 @@ fn test_pause_blocks_reject_session() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Book session while unpaused
     let booking_id = {
@@ -924,13 +974,14 @@ fn test_unpause_resumes_operations() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Set expert rate
     client.set_my_rate(&expert, &10_i128);
@@ -962,13 +1013,14 @@ fn test_read_only_functions_work_while_paused() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
 
     let token_admin = Address::generate(&env);
     let token = create_token_contract(&env, &token_admin);
     token.mint(&user, &10_000);
 
     let client = create_client(&env);
-    client.init(&admin, &token.address, &oracle);
+    client.init(&admin, &token.address, &oracle, &registry);
 
     // Book a session before pausing
     let booking_id = {

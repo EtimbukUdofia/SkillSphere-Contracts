@@ -7,6 +7,7 @@ pub enum DataKey {
     Admin,
     Token,
     Oracle,
+    RegistryAddress,        // Identity Registry contract address
     Booking(u64),            // Booking ID -> BookingRecord
     BookingCounter,          // Counter for generating unique booking IDs
     UserBookings(Address),   // User Address -> Vec<u64> of booking IDs
@@ -45,6 +46,15 @@ pub fn set_oracle(env: &Env, oracle: &Address) {
 
 pub fn get_oracle(env: &Env) -> Address {
     env.storage().instance().get(&DataKey::Oracle).unwrap()
+}
+
+// --- Registry (Identity) ---
+pub fn set_registry_address(env: &Env, registry: &Address) {
+    env.storage().instance().set(&DataKey::RegistryAddress, registry);
+}
+
+pub fn get_registry_address(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::RegistryAddress)
 }
 
 // --- Pause (Circuit Breaker) ---
