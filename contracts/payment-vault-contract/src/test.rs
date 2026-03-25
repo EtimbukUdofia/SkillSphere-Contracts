@@ -2,7 +2,7 @@
 use crate::{PaymentVaultContract, PaymentVaultContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, Env, Symbol,
+    token, Address, Env,
 };
 
 extern crate std;
@@ -17,7 +17,7 @@ fn create_token_contract<'a>(env: &'a Env, admin: &Address) -> token::StellarAss
     token::StellarAssetClient::new(env, &contract.address())
 }
 
-// Mock Identity Registry contract that returns true for is_verified
+// Mock Identity Registry contract that returns configurable value for is_verified
 mod mock_registry {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
@@ -26,9 +26,16 @@ mod mock_registry {
 
     #[contractimpl]
     impl MockRegistry {
-        pub fn is_verified(env: Env, expert: Address) -> bool {
-            // Always return true for mock
-            true
+        pub fn is_verified(env: Env, _expert: Address) -> bool {
+            // Read the verification state from the registry's storage
+            // For simplicity, we'll use an internal storage key
+            let key = Symbol::new(&env, "is_verified");
+            env.storage().instance().get(&key).unwrap_or(true)
+        }
+
+        pub fn set_verified(env: Env, verified: bool) {
+            let key = Symbol::new(&env, "is_verified");
+            env.storage().instance().set(&key, &verified);
         }
     }
 }
@@ -47,7 +54,6 @@ fn test_initialization() {
     let admin = Address::generate(&env);
     let token = Address::generate(&env);
     let oracle = Address::generate(&env);
-    let registry = create_mock_registry(&env);
     let registry = create_mock_registry(&env);
 
     // 1. Successful Init
@@ -68,7 +74,6 @@ fn test_partial_duration_scenario() {
     let user = Address::generate(&env);
     let expert = Address::generate(&env);
     let oracle = Address::generate(&env);
-    let registry = create_mock_registry(&env);
     let registry = create_mock_registry(&env);
 
     // Create token contract and mint tokens to user
@@ -824,6 +829,37 @@ fn test_book_session_fails_if_expert_rate_not_set() {
     // Expert has NOT set rate
 
     // Book session should fail
+    let max_duration = 100_u64;
+    let res = client.try_book_session(&user, &expert, &max_duration);
+
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_book_session_fails_if_expert_not_verified() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let expert = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let registry = create_mock_registry(&env);
+
+    // Set the mock registry to return false (expert not verified)
+    mock_registry::MockRegistryClient::new(&env, &registry).set_verified(&false);
+
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    token.mint(&user, &5_000);
+
+    let client = create_client(&env);
+    client.init(&admin, &token.address, &oracle, &registry);
+
+    // Set expert's rate
+    client.set_my_rate(&expert, &10_i128);
+
+    // Book session should fail with ExpertNotVerified error
     let max_duration = 100_u64;
     let res = client.try_book_session(&user, &expert, &max_duration);
 
